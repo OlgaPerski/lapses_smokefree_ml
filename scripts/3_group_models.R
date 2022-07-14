@@ -6,8 +6,6 @@ source(here::here("scripts", "0_load_packages.R"))
 
 data_clean <- read_rds(here::here("data", "clean_data.rds"))
 
-data_clean$time_to_first_cig <- factor(data_clean$time_to_first_cig, levels = c("<= 5", "6-30", "31-60", "> 60"))
-
 doParallel::registerDoParallel()
 
 #restrict sample to participants with 20+ craving entries ----------------------
@@ -46,7 +44,7 @@ train_data %>%
 rec <- recipe(craving_did_smoke ~ ., data = train_data) %>%
   step_dummy(all_nominal(), -all_outcomes()) %>%
   step_normalize(cigs_per_day, craving_severity, days_since_qd, mins_since_prev_rep) %>%
-  step_downsample(craving_did_smoke, skip = TRUE) # manages class imbalances through downsampling
+  step_downsample(craving_did_smoke, skip = TRUE) # manages class imbalances through downsampling and skips this step during testing
 
 rf_prep <- prep(rec)
 rf_juiced <- juice(rf_prep)
@@ -232,6 +230,13 @@ write_rds(final_svm, here("data", "group models", "group_final_svm.rds"))
 write_rds(final_elnet, here("data", "group models", "group_final_elnet.rds"))
 write_rds(final_xgb, here("data", "group models", "group_final_xgb.rds"))
 
+#summarise best-performing model parameters ------------------------------
+
+rf_res %>% select_best("roc_auc")
+svm_res %>% select_best("roc_auc")
+elnet_res %>% select_best("roc_auc")
+xgb_res %>% select_best("roc_auc")
+
 #examine feature importance ----------------------------------------------
 
 #random forest
@@ -245,17 +250,26 @@ vip_rf <- final_rf %>%
 vip_rf <- vip_rf$data %>%
   mutate(Variable = str_replace_all(Variable, "_", " "),
          Variable = str_remove(Variable, "craving"),
+         Variable = str_remove(Variable, " yes"),
+         Variable = str_remove(Variable, " true"),
+         Variable = str_remove(Variable, " false"),
+         Variable = str_remove(Variable, ":::"),
+         Variable = str_remove(Variable, "Craving"),
          Variable = str_replace_all(Variable, "occupation", "activity"),
          Variable = str_replace_all(Variable, "env", "with"),
          Variable = str_replace_all(Variable, "with alone", "alone"),
          Variable = str_replace_all(Variable, "severity", "craving severity"),
-         Variable = str_replace_all(Variable, " true", ": true"),
-         Variable = str_replace_all(Variable, " false", ": false"),
          Variable = str_replace_all(Variable, "qd", "quit date"),
-         Variable = str_replace_all(Variable, " yes", ": yes"),
          Variable = str_replace_all(Variable, "prev rep", "previous report"),
          Variable = str_to_sentence(Variable),
          Variable = str_replace_all(Variable, " x6.30", ": 6-30 mins"),
+         Variable = str_replace_all(Variable, " x31.60", ": 31-60 mins"),
+         Variable = str_replace_all(Variable, "mins", "minutes"),
+         Variable = str_replace_all(Variable, "Mins", "Minutes"),
+         Variable = str_replace_all(Variable, "Cigs", "Cigarettes"),
+         Variable = str_replace_all(Variable, "cig", "cigarette"),
+         Variable = str_replace_all(Variable, "Activity", "Activity:"),
+         Variable = str_replace_all(Variable, "Feeling", "Feeling:"),
          Variable = str_trim(Variable)) %>%
   arrange(-Importance) %>%
   mutate(Variable = fct_inorder(Variable)) %>%
@@ -267,7 +281,7 @@ vip_rf <- vip_rf$data %>%
 write_rds(vip_rf, here("data", "group models", "group_vip_rf.rds"))
 
 if(!file.exists(here("outputs", "group models", "group_vip_rf.png"))) ggsave(vip_rf, filename = here("outputs", "group models", "group_vip_rf.png"), 
-                                                                  dpi = 320, height = 8, width = 10)
+                                                                  dpi = 320, height = 4, width = 6)
 
 #support vector machine
 
@@ -292,17 +306,19 @@ vip_svm <- svm_fit %>%
 vip_svm <- vip_svm$data %>%
   mutate(Variable = str_replace_all(Variable, "_", " "),
          Variable = str_remove(Variable, "craving"),
+         Variable = str_remove(Variable, " true"),
          Variable = str_replace_all(Variable, "occupation", "activity"),
          Variable = str_replace_all(Variable, "env", "with"),
          Variable = str_replace_all(Variable, "with alone", "alone"),
          Variable = str_replace_all(Variable, "severity", "craving severity"),
-         Variable = str_replace_all(Variable, " true", ": true"),
          Variable = str_replace_all(Variable, " false", ": false"),
          Variable = str_replace_all(Variable, "qd", "quit date"),
          Variable = str_replace_all(Variable, " yes", ": yes"),
          Variable = str_replace_all(Variable, "prev rep", "previous report"),
          Variable = str_to_sentence(Variable),
          Variable = str_replace_all(Variable, " x6.30", ": 6-30 mins"),
+         Variable = str_replace_all(Variable, "Activity", "Activity:"),
+         Variable = str_replace_all(Variable, "Feeling", "Feeling:"),
          Variable = str_trim(Variable)) %>%
   arrange(-Importance) %>%
   mutate(Variable = fct_inorder(Variable)) %>%
@@ -327,17 +343,19 @@ vip_elnet <- final_elnet %>%
 vip_elnet <- vip_elnet$data %>%
   mutate(Variable = str_replace_all(Variable, "_", " "),
          Variable = str_remove(Variable, "craving"),
+         Variable = str_remove(Variable, "true"),
+         Variable = str_remove(Variable, "false"),
+         Variable = str_remove(Variable, "yes"),
          Variable = str_replace_all(Variable, "occupation", "activity"),
          Variable = str_replace_all(Variable, "env", "with"),
          Variable = str_replace_all(Variable, "with alone", "alone"),
          Variable = str_replace_all(Variable, "severity", "craving severity"),
-         Variable = str_replace_all(Variable, " true", ": true"),
-         Variable = str_replace_all(Variable, " false", ": false"),
          Variable = str_replace_all(Variable, "qd", "quit date"),
-         Variable = str_replace_all(Variable, " yes", ": yes"),
          Variable = str_replace_all(Variable, "prev rep", "previous report"),
          Variable = str_to_sentence(Variable),
          Variable = str_replace_all(Variable, " x6.30", ": 6-30 mins"),
+         Variable = str_replace_all(Variable, "Activity", "Activity:"),
+         Variable = str_replace_all(Variable, "Feeling", "Feeling:"),
          Variable = str_trim(Variable)) %>%
   arrange(-Importance) %>%
   mutate(Variable = fct_inorder(Variable)) %>%
@@ -362,20 +380,25 @@ vip_xgb <- final_xgb %>%
 vip_xgb <- vip_xgb$data %>%
   mutate(Variable = str_replace_all(Variable, "_", " "),
          Variable = str_remove(Variable, "craving"),
+         Variable = str_remove(Variable, "true"),
+         Variable = str_remove(Variable, "false"),
+         Variable = str_remove(Variable, "yes"),
          Variable = str_replace_all(Variable, "occupation", "activity"),
          Variable = str_replace_all(Variable, "env", "with"),
          Variable = str_replace_all(Variable, "with alone", "alone"),
          Variable = str_replace_all(Variable, "severity", "craving severity"),
-         Variable = str_replace_all(Variable, " true", ": true"),
-         Variable = str_replace_all(Variable, " false", ": false"),
          Variable = str_replace_all(Variable, "qd", "quit date"),
-         Variable = str_replace_all(Variable, " yes", ": yes"),
          Variable = str_replace_all(Variable, "prev rep", "previous report"),
          Variable = str_replace_all(Variable, "wkday", "day of the week:"),
          Variable = str_to_sentence(Variable),
          Variable = str_replace_all(Variable, " x6.30", ": 6-30 mins"),
          Variable = str_replace_all(Variable, "1", "Monday"),
          Variable = str_replace_all(Variable, "5", "Friday"),
+         Variable = str_replace_all(Variable, "Cigs", "Cigarettes"),
+         Variable = str_replace_all(Variable, "cig", "cigarette"),
+         Variable = str_replace_all(Variable, "Mins", "Minutes"),
+         Variable = str_replace_all(Variable, "mins", "Minutes"),
+         Variable = str_replace_all(Variable, "2", "Tuesday"),
          Variable = str_trim(Variable)) %>%
   arrange(-Importance) %>%
   mutate(Variable = fct_inorder(Variable)) %>%
@@ -413,9 +436,9 @@ final_rf_res %>%
 
 roc_rf <- final_rf_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_rf_obj <- roc(roc_rf$craving_did_smoke, roc_rf$.pred_false)
+roc_rf_obj <- roc(roc_rf$craving_did_smoke, roc_rf$.pred_true)
 auc(roc_rf_obj)
 ci.auc(roc_rf_obj)
 
@@ -433,9 +456,9 @@ final_svm_res %>%
 
 roc_svm <- final_svm_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_svm_obj <- roc(roc_svm$craving_did_smoke, roc_svm$.pred_false)
+roc_svm_obj <- roc(roc_svm$craving_did_smoke, roc_svm$.pred_true)
 auc(roc_svm_obj)
 ci.auc(roc_svm_obj)
 
@@ -453,9 +476,9 @@ final_elnet_res %>%
 
 roc_elnet <- final_elnet_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_elnet_obj <- roc(roc_elnet$craving_did_smoke, roc_elnet$.pred_false)
+roc_elnet_obj <- roc(roc_elnet$craving_did_smoke, roc_elnet$.pred_true)
 auc(roc_elnet_obj)
 ci.auc(roc_elnet_obj)
 
@@ -473,37 +496,11 @@ final_xgb_res %>%
 
 roc_xgb <- final_xgb_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_xgb_obj <- roc(roc_xgb$craving_did_smoke, roc_xgb$.pred_false)
+roc_xgb_obj <- roc(roc_xgb$craving_did_smoke, roc_xgb$.pred_true)
 auc(roc_xgb_obj)
 ci.auc(roc_xgb_obj)
-
-#generate confusion matrices ---------------------------------------------
-
-#random forest
-
-final_rf_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
-
-#support vector machine
-
-final_svm_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
-
-#elastic net
-
-final_elnet_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
-
-#xgboost
-
-final_xgb_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
 
 #prepare for model comparison --------------------------------------------
 
@@ -512,7 +509,7 @@ final_xgb_res %>%
 rf_auc <-
   final_rf_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "Random Forest")
 
 #support vector machine
@@ -520,7 +517,7 @@ rf_auc <-
 svm_auc <-
   final_svm_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "Support Vector Machine")
 
 #elastic net
@@ -528,7 +525,7 @@ svm_auc <-
 elnet_auc <-
   final_elnet_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "Penalised Logistic Regression")
 
 #xgboost
@@ -536,16 +533,15 @@ elnet_auc <-
 xgb_auc <-
   final_xgb_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "XGBoost")
 
 #compare model performance
 
 combined_roc <- bind_rows(rf_auc, elnet_auc, svm_auc, xgb_auc) %>%
-  mutate(model = as_factor(model), 
-         model = fct_relevel(model, levels = c("Random Forest", "XGBoost", "Support Vector Machine", "Penalised Logistic Regression"))) %>%
-  ggplot(aes(x = 1 - specificity, y = sensitivity, col = model)) +
-  geom_path(lwd = 1.5, alpha = 0.8) +
+  mutate(model = factor(model, levels = c("Random Forest", "XGBoost", "Support Vector Machine", "Penalised Logistic Regression"))) %>%
+  ggplot() +
+  geom_line(aes(x = 1 - specificity, y = sensitivity, colour = model), lwd = 1.2) +
   geom_abline(lty = 3) + 
   coord_equal() + 
   scale_color_viridis_d(option = "plasma", end = .6) +
@@ -558,3 +554,46 @@ write_rds(combined_roc, here("data", "group models", "group_combined_roc.rds"))
 
 if(!file.exists(here("outputs", "group models", "group_combined_roc.png"))) ggsave(combined_roc, filename = here("outputs", "group models", "group_combined_roc.png"), 
                                                                   dpi = 320, height = 8, width = 10)
+
+# produce figure 3 after having run sensitivity analyses ------------------
+
+combined_roc <- read_rds(here("data", "group models", "group_combined_roc.rds"))
+combined_roc_no_prior_lapse <- read_rds(here("data", "group models", "combined_roc_no_prior_lapse.rds"))
+combined_roc_without_no_lapses <- read_rds(here("data", "group models", "combined_roc_without_no_lapses.rds"))
+combined_roc_10_entries <- read_rds(here("data", "group models", "group_combined_roc_10_entries.rds"))
+
+fig_3 <- plot_grid(plotlist = list(combined_roc +
+                                     theme_bw() +
+                                     theme(legend.position = "none"),
+                                   combined_roc_no_prior_lapse + 
+                                     theme_bw() +
+                                     theme(legend.position = "none"),
+                                   combined_roc_without_no_lapses + 
+                                     theme_bw() +
+                                     theme(legend.position = "none"),
+                                   combined_roc_10_entries + 
+                                     theme_bw() +
+                                     theme(legend.position = "none"),
+                                   get_legend(combined_roc)),
+                   rel_heights = c(1, 1, 0.5),
+                   rel_widths = c(1, 1, 0.5),
+                   nrow = 3, ncol = 2,
+                   scale = 1,
+                   labels = c("a", "b", "c", "d", ""))
+
+fig_3 <- (combined_roc +
+            theme_bw() +
+            theme(legend.position = "none") |
+            combined_roc_no_prior_lapse + 
+            theme_bw() +
+            theme(legend.position = "none")) /
+  (combined_roc_without_no_lapses + 
+     theme_bw() +
+     theme(legend.position = "none") |
+     combined_roc_10_entries + 
+     theme_bw() +
+     theme(legend.position = "none")) /
+  (get_legend(combined_roc))+
+  plot_annotation(tag_levels = c("A", "A", NULL))
+
+ggsave(plot = fig_3, filename = here("outputs", "group models", "fig_3.png"), height = 6)

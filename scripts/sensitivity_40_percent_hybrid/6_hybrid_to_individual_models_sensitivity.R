@@ -18,10 +18,7 @@ data <- data_clean %>%
 
 # select vars to include
 
-exclude <- c("adjusted_quit_date", "adjusted_craving_record_created", 
-             "ttfc_1", "ttfc_2", "ttfc_3", "ttfc_4",
-             "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", 
-             "morning", "midday", "evening", "night", 
+exclude <- c("adjusted_quit_date", "adjusted_craving_record_created",
              "event_nr", "n")
 
 df <- data %>%
@@ -59,7 +56,7 @@ for(i in 1:length(df_split)) {
   tmp <- tibble()
   
   tmp <- df_split_training[[i]][sample(which(df_split_training[[i]]$train_split=="testing"),
-                                     round(0.2*length(which(df_split_training[[i]]$train_split=="testing")))),]
+                                     round(0.4*length(which(df_split_training[[i]]$train_split=="testing")))),]
   tmp_2 <- tibble()
   
   tmp_2 <- anti_join(df_split_training[[i]], tmp, by = "row_number")
@@ -69,22 +66,16 @@ for(i in 1:length(df_split)) {
   tmp_3 <- tmp %>%
     mutate(train_split = "training")
   
+  account_id <- as.character(unique(tmp_3$account_id))
+  
   df_split_training[[i]] <- bind_rows(tmp_2, tmp_3)
   
   df_split_training[[i]] <- df_split_training[[i]] %>%
     select(-c("account_id", "lapse_events", "prop_lapses", "row_number"))
+  
+  names(df_split_training)[[i]] <- account_id
+  
 }
-
-# for(i in 1:length(df_split_training)) {
-#   
-#   events <- df_split_training[[i]] %>%
-#     filter(train_split == "testing") %>%
-#     filter(craving_did_smoke == "true") %>%
-#     nrow()
-#   
-#   if(events == 0) df_split_training[i] <- NULL
-#   
-# }
 
 # fit best-performing group-level model to individual data ---------------------------
 
@@ -108,25 +99,23 @@ for (i in 1:length(df_split_training)) {
   rf_prep <- prep(rf_rec)
   rf_juiced <- juice(rf_prep)
   
-  xgb_spec <- boost_tree(
-    trees = 1000, 
-    tree_depth = 6, min_n = 8, 
-    loss_reduction = 0.853,                   
-    sample_size = 0.858, mtry = 23,         
-    learn_rate = 0.0277,                        
-  ) %>% 
-    set_engine("xgboost") %>% 
-    set_mode("classification")
+  rf_spec <- rand_forest(
+    mtry = 3,
+    trees = 500,
+    min_n = 13
+  ) %>%
+    set_mode("classification") %>%
+    set_engine("ranger")
   
-  wf_xgb <- workflow() %>%
+  wf_rf <- workflow() %>%
     add_recipe(rf_rec) %>%
-    add_model(xgb_spec)
+    add_model(rf_spec)
   
-  final_xgb_workflow_fit <- fit(wf_xgb, data = train_data)
+  final_rf_workflow_fit <- fit(wf_rf, data = train_data)
   
-  test_data$.pred_false <- predict(final_xgb_workflow_fit, new_data = test_data, type = "prob")$.pred_false
+  test_data$.pred_true <- predict(final_rf_workflow_fit, new_data = test_data, type = "prob")$.pred_true
   
-  roc_test_error <- tryCatch(roc(test_data$craving_did_smoke, test_data$.pred_false), error = function(e) e)
+  roc_test_error <- tryCatch(roc(test_data$craving_did_smoke, test_data$.pred_true), error = function(e) e)
   
   if(any(class(roc_test_error) == "error")) {
     
@@ -134,21 +123,53 @@ for (i in 1:length(df_split_training)) {
     
   } else {
     
-    roc_obj <- roc(test_data$craving_did_smoke, test_data$.pred_false)
+    roc_obj <- roc(test_data$craving_did_smoke, test_data$.pred_true)
     auc <- auc(roc_obj)
     
     df_model_fit_hybrid[[i]] <- list(auc = auc)
+    
+    names(df_model_fit_hybrid)[[i]] <- names(df_split_training)[[i]]
   }
+
 }
 
-write_rds(df_model_fit_hybrid, here("data", "df_model_fit_hybrid.rds"))
+write_rds(df_model_fit_hybrid, here("data", "df_model_fit_hybrid_sensitivity.rds"))
 
 # summarise model performance for each individual -------------------------
 
-df_model_fit_hybrid <- read_rds(here::here("data", "df_model_fit_hybrid.rds"))
+df_model_fit_hybrid <- read_rds(here::here("data", "df_model_fit_hybrid_sensitivity.rds"))
 
-model_performance_hybrid <- tibble(auc = unlist(map(df_model_fit_hybrid, "auc")))
+model_performance_hybrid_sensitivity <- tibble(account_id = names(df_model_fit_hybrid[lengths(df_model_fit_hybrid) >= 1]),
+                                   auc = unlist(map(df_model_fit_hybrid, "auc")))
 
-mean(model_performance_hybrid$auc)
-sd(model_performance_hybrid$auc)
-range(model_performance_hybrid$auc)
+median(model_performance_hybrid_sensitivity$auc)
+range(model_performance_hybrid_sensitivity$auc)
+
+# compare to group model --------------------------------------------------
+
+group_auc <- read_rds(here("data", "group models", "group_to_individual.rds"))
+
+hybrid_to_group_sensitivity <- model_performance_hybrid_sensitivity %>%
+  select(account_id, model_auc = auc) %>%
+  left_join(group_auc %>%
+              rename(group_auc = auc), by = c("account_id")) %>%
+  mutate(hybrid_preferred = model_auc >= group_auc)
+
+sum(hybrid_to_group_sensitivity$hybrid_preferred == TRUE)/158*100
+sum(hybrid_to_group_sensitivity$hybrid_preferred == FALSE)/158*100
+
+hybrid_to_group_sensitivity_plot <- hybrid_to_group_sensitivity %>%
+  ggplot() +
+  geom_point(aes(x = group_auc, y = model_auc, colour = hybrid_preferred)) +
+  geom_abline() +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_colour_viridis_d() +
+  theme_bw() +
+  labs(x = "Group-level algorithm AUC",
+       y = "Hybrid algorithm AUC") +
+  theme(legend.position = "none")
+
+if(!file.exists(here("outputs", "hybrid models", "hybrid_to_group_sensitivity_plot.png"))) ggsave(hybrid_to_group_sensitivity_plot, 
+                                                                                              filename = here("outputs", "hybrid models", "hybrid_to_group_sensitivity_plot.png"),
+                                                                                              dpi = 320, height = 8, width = 10)

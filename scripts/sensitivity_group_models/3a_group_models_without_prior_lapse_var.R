@@ -16,24 +16,12 @@ data <- data_clean %>%
   ungroup() %>%
   filter(n >= 20)
 
-# remove users with no lapses
-
-df <- data %>%
-  group_by(account_id) %>%
-  mutate(lapse_events = n()) %>%
-  mutate(prop_lapses = sum(craving_did_smoke == "true", na.rm = T)/lapse_events) %>%
-  filter(prop_lapses > 0) %>%
-  ungroup()
-
 # select vars to include and impute missing
 
-exclude <- c("account_id", "adjusted_quit_date", "adjusted_craving_record_created", 
-             "ttfc_1", "ttfc_2", "ttfc_3", "ttfc_4",
-             "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", 
-             "morning", "midday", "evening", "night", 
-             "event_nr", "n", "lapse_events", "prop_lapses")
+exclude <- c("account_id", "adjusted_quit_date", "adjusted_craving_record_created",
+             "event_nr", "n", "prior_event_lapse")
 
-df <- df %>%
+df <- data %>%
   select(-all_of(exclude))
 
 df$mins_since_prev_rep[is.na(df$mins_since_prev_rep)] <- 0
@@ -54,8 +42,8 @@ train_data %>%
 
 rec <- recipe(craving_did_smoke ~ ., data = train_data) %>%
   step_dummy(all_nominal(), -all_outcomes()) %>%
-  step_normalize(cigs_per_day, craving_severity, days_since_qd, mins_since_prev_rep) %>%
-  step_downsample(craving_did_smoke) # manages class imbalances
+  step_normalize(cigs_per_day, craving_severity, days_since_qd) %>%
+  step_downsample(craving_did_smoke, skip = TRUE) # manages class imbalances
 
 rf_prep <- prep(rec)
 rf_juiced <- juice(rf_prep)
@@ -234,64 +222,6 @@ final_xgb <- finalize_model(
   best_xgb_auc
 )
 
-# examine feature importance ----------------------------------------------
-
-# random forest
-
-vip_rf_sensitivity <- final_rf %>%
-  set_engine("ranger", importance = "permutation") %>%
-  fit(craving_did_smoke ~ .,
-      data = juice(rf_prep)) %>%
-  vip()
-
-if(!file.exists(here("outputs", "vip_rf_sensitivity.png"))) ggsave(vip_rf_sensitivity, filename = here("outputs", "vip_rf_sensitivity.png"), 
-                                                       dpi = 320, height = 8, width = 10)
-
-# support vector machine
-
-svm_spec_best <- svm_rbf(
-  cost = best_svm_auc$cost, #input values from best performing SVM above
-  rbf_sigma = best_svm_auc$rbf_sigma
-) %>%
-  set_mode("classification") %>%
-  set_engine("kernlab")
-
-svm_fit <- workflow() %>%
-  add_model(svm_spec_best) %>%
-  add_formula(craving_did_smoke ~ .) %>%
-  fit(juice(rf_prep)) 
-
-vip_svm_sensitivity <- svm_fit %>%
-  extract_fit_parsnip() %>%
-  vip(method = "permute", 
-      target = "craving_did_smoke", metric = "auc", reference_class = "true",
-      pred_wrapper = kernlab::predict, train = juice(rf_prep))
-
-if(!file.exists(here("outputs", "vip_svm_sensitivity.png"))) ggsave(vip_svm_sensitivity, filename = here("outputs", "vip_svm_sensitivity.png"), 
-                                                        dpi = 320, height = 8, width = 10)
-
-# elastic net
-
-vip_elnet_sensitivity <- final_elnet %>%
-  set_engine("glmnet", importance = "permutation") %>%
-  fit(craving_did_smoke ~ .,
-      data = juice(rf_prep)) %>%
-  vip()
-
-if(!file.exists(here("outputs", "vip_elnet_sensitivity.png"))) ggsave(vip_elnet_sensitivity, filename = here("outputs", "vip_elnet_sensitivity.png"), 
-                                                          dpi = 320, height = 8, width = 10)
-
-# xgboost
-
-vip_xgb_sensitivity <- final_xgb %>%
-  set_engine("xgboost") %>%
-  fit(craving_did_smoke ~ .,
-      data = juice(rf_prep)) %>%
-  vip()
-
-if(!file.exists(here("outputs", "vip_xgb_sensitivity.png"))) ggsave(vip_xgb_sensitivity, filename = here("outputs", "vip_xgb_sensitivity.png"), 
-                                                        dpi = 320, height = 8, width = 10)
-
 # fit final model to test data --------------------------------------------
 
 # random forest
@@ -308,9 +238,9 @@ final_rf_res %>%
 
 roc_rf <- final_rf_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_rf_obj <- roc(roc_rf$craving_did_smoke, roc_rf$.pred_false)
+roc_rf_obj <- roc(roc_rf$craving_did_smoke, roc_rf$.pred_true)
 auc(roc_rf_obj)
 ci.auc(roc_rf_obj)
 
@@ -328,9 +258,9 @@ final_svm_res %>%
 
 roc_svm <- final_svm_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_svm_obj <- roc(roc_svm$craving_did_smoke, roc_svm$.pred_false)
+roc_svm_obj <- roc(roc_svm$craving_did_smoke, roc_svm$.pred_true)
 auc(roc_svm_obj)
 ci.auc(roc_svm_obj)
 
@@ -348,9 +278,9 @@ final_elnet_res %>%
 
 roc_elnet <- final_elnet_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_elnet_obj <- roc(roc_elnet$craving_did_smoke, roc_elnet$.pred_false)
+roc_elnet_obj <- roc(roc_elnet$craving_did_smoke, roc_elnet$.pred_true)
 auc(roc_elnet_obj)
 ci.auc(roc_elnet_obj)
 
@@ -368,37 +298,11 @@ final_xgb_res %>%
 
 roc_xgb <- final_xgb_res %>%
   collect_predictions() %>%
-  select(.pred_false, craving_did_smoke)
+  select(.pred_true, craving_did_smoke)
 
-roc_xgb_obj <- roc(roc_xgb$craving_did_smoke, roc_xgb$.pred_false)
+roc_xgb_obj <- roc(roc_xgb$craving_did_smoke, roc_xgb$.pred_true)
 auc(roc_xgb_obj)
 ci.auc(roc_xgb_obj)
-
-# generate confusion matrices ---------------------------------------------
-
-# random forest
-
-final_rf_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
-
-# support vector machine
-
-final_svm_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
-
-# elastic net
-
-final_elnet_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
-
-# xgboost
-
-final_xgb_res %>%
-  collect_predictions() %>%
-  conf_mat(truth = craving_did_smoke, estimate = .pred_class)
 
 # prepare for model comparison --------------------------------------------
 
@@ -407,7 +311,7 @@ final_xgb_res %>%
 rf_auc <-
   final_rf_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "Random Forest")
 
 # support vector machine
@@ -415,7 +319,7 @@ rf_auc <-
 svm_auc <-
   final_svm_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "Support Vector Machine")
 
 # elastic net
@@ -423,7 +327,7 @@ svm_auc <-
 elnet_auc <-
   final_elnet_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "Penalised Logistic Regression")
 
 # xgboost
@@ -431,16 +335,15 @@ elnet_auc <-
 xgb_auc <-
   final_xgb_res %>%
   collect_predictions() %>%
-  roc_curve(craving_did_smoke, .pred_false) %>%
+  roc_curve(craving_did_smoke, .pred_true) %>%
   mutate(model = "XGBoost")
 
 # compare model performance
 
-combined_roc_sensitivity <- bind_rows(rf_auc, elnet_auc, svm_auc, xgb_auc) %>%
-  mutate(model = as_factor(model), 
-         model = fct_relevel(model, levels = c("Random Forest", "XGBoost", "Support Vector Machine", "Penalised Logistic Regression"))) %>%
-  ggplot(aes(x = 1 - specificity, y = sensitivity, col = model)) +
-  geom_path(lwd = 1.5, alpha = 0.8) +
+combined_roc_no_prior_lapse <- bind_rows(rf_auc, elnet_auc, svm_auc, xgb_auc) %>%
+  mutate(model = factor(model, levels = c("Random Forest", "XGBoost", "Support Vector Machine", "Penalised Logistic Regression"))) %>%
+  ggplot() +
+  geom_line(aes(x = 1 - specificity, y = sensitivity, colour = model), lwd = 1.2) +
   geom_abline(lty = 3) + 
   coord_equal() + 
   scale_color_viridis_d(option = "plasma", end = .6) +
@@ -449,5 +352,7 @@ combined_roc_sensitivity <- bind_rows(rf_auc, elnet_auc, svm_auc, xgb_auc) %>%
   labs(col = "Model") +
   theme_minimal()
 
-if(!file.exists(here("outputs", "plot_combined_roc_sensitivity.png"))) ggsave(combined_roc_sensitivity, filename = here("outputs", "plot_combined_roc_sensitivity.png"), 
+write_rds(combined_roc_no_prior_lapse, here("data", "group models", "combined_roc_no_prior_lapse.rds"))
+
+if(!file.exists(here("outputs", "group models", "plot_combined_roc_no_prior_lapse.png"))) ggsave(combined_roc_no_prior_lapse, filename = here("outputs", "group models", "plot_combined_roc_no_prior_lapse.png"), 
                                                                   dpi = 320, height = 8, width = 10)

@@ -18,10 +18,7 @@ data <- data_clean %>%
 
 # select vars to include and impute missing
 
-exclude <- c("adjusted_quit_date", "adjusted_craving_record_created", 
-             "ttfc_1", "ttfc_2", "ttfc_3", "ttfc_4",
-             "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", 
-             "morning", "midday", "evening", "night", 
+exclude <- c("adjusted_quit_date", "adjusted_craving_record_created",
              "event_nr", "n")
 
 df <- data %>%
@@ -78,7 +75,7 @@ run_rf_models <- function(x) {
     step_dummy(all_nominal(), -all_outcomes()) %>%
     step_zv(all_predictors()) %>%
     step_normalize(craving_severity) %>%
-    step_upsample(craving_did_smoke) # manages class imbalances
+    step_upsample(craving_did_smoke, skip = TRUE) # manages class imbalances
   
   rf_prep <- prep(rf_rec)
   rf_juiced <- juice(rf_prep)
@@ -148,7 +145,7 @@ run_rf_models <- function(x) {
 
 individual_models_rf <- lapply(rf_sample, function(x) try(run_rf_models(x)))
 
-write_rds(individual_models_rf, here("data", "individual_models_rf.rds"))
+write_rds(individual_models_rf, here("data", "individual models", "individual_models_rf.rds"))
 
 # support vector machine -----------------------------------------------------------
 
@@ -165,7 +162,7 @@ run_svm_models <- function(x) {
     step_dummy(all_nominal(), -all_outcomes()) %>%
     step_zv(all_predictors()) %>%
     step_normalize(craving_severity) %>%
-    step_upsample(craving_did_smoke) # manages class imbalances
+    step_upsample(craving_did_smoke, skip = TRUE) # manages class imbalances
   
   svm_prep <- prep(svm_rec)
   svm_juiced <- juice(svm_prep)
@@ -246,7 +243,7 @@ run_svm_models <- function(x) {
 
 individual_models_svm <- lapply(rf_sample, function(x) try(run_svm_models(x)))
 
-write_rds(individual_models_svm, here("data", "individual_models_svm.rds"))
+write_rds(individual_models_svm, here("data", "individual models", "individual_models_svm.rds"))
 
 # penalised logistic regression -----------------------------------------------------------
 
@@ -263,7 +260,7 @@ run_elnet_models <- function(x) {
     step_dummy(all_nominal(), -all_outcomes()) %>%
     step_zv(all_predictors()) %>%
     step_normalize(craving_severity) %>%
-    step_upsample(craving_did_smoke) # manages class imbalances
+    step_upsample(craving_did_smoke, skip = TRUE) # manages class imbalances
   
   elnet_prep <- prep(elnet_rec)
   elnet_juiced <- juice(elnet_prep)
@@ -332,7 +329,7 @@ run_elnet_models <- function(x) {
 
 individual_models_elnet <- lapply(rf_sample, function(x) try(run_elnet_models(x)))
 
-write_rds(individual_models_elnet, here("data", "individual_models_elnet.rds"))
+write_rds(individual_models_elnet, here("data", "individual models", "individual_models_elnet.rds"))
 
 # xgboost -----------------------------------------------------------
 
@@ -349,7 +346,7 @@ run_xgb_models <- function(x) {
     step_dummy(all_nominal(), -all_outcomes()) %>%
     step_zv(all_predictors()) %>%
     step_normalize(craving_severity) %>%
-    step_upsample(craving_did_smoke) # manages class imbalances
+    step_upsample(craving_did_smoke, skip = TRUE) # manages class imbalances
   
   xgb_prep <- prep(xgb_rec)
   xgb_juiced <- juice(xgb_prep)
@@ -429,14 +426,14 @@ run_xgb_models <- function(x) {
 
 individual_models_xgb <- lapply(rf_sample, function(x) try(run_xgb_models(x)))
 
-write_rds(individual_models_xgb, here("data", "individual_models_xgb.rds"))
+write_rds(individual_models_xgb, here("data", "individual models", "individual_models_xgb.rds"))
 
 # extracting model performance metrics ------------------------------
 
-individual_models_rf <- read_rds(here::here("data", "individual_models_rf.rds"))
-individual_models_svm <- read_rds(here::here("data", "individual_models_svm.rds"))
-individual_models_elnet <- read_rds(here::here("data", "individual_models_elnet.rds"))
-individual_models_xgb <- read_rds(here::here("data", "individual_models_xgb.rds"))
+individual_models_rf <- read_rds(here("data", "individual models", "individual_models_rf.rds"))
+individual_models_svm <- read_rds(here("data", "individual_models_svm.rds"))
+individual_models_elnet <- read_rds(here("data", "individual models", "individual_models_elnet.rds"))
+individual_models_xgb <- read_rds(here("data", "individual models", "individual_models_xgb.rds"))
 
 names(individual_models_rf) <- lapse_count
 names(individual_models_svm) <- lapse_count
@@ -454,9 +451,15 @@ extract_model_characteristics <- function(account_ids = lapse_count, rf_model = 
                             estimate = as.numeric(NA),
                             model = as.character(NA))
   
-  for(n in 1:length(account_ids)) {
+  complete_models <- tibble(account_ids = account_ids,
+                            complete_models = lengths(rf_model) >= 3 & lengths(svm_model) >= 3 & lengths(elnet_model) >= 3 & lengths(xgb_model) >= 3) %>%
+    filter(complete_models == TRUE)
+  
+  for(i in 1:nrow(complete_models)) {
     
-    model_extraction <- tibble(account_id = rep(lapse_count[n], 16),
+    n = complete_models$account_ids[i]
+    
+    model_extraction <- tibble(account_id = rep(n, 16),
                      metric = c(unlist(rf_model[[n]][["metrics_rf"]][[1]][,1]),
                                 unlist(svm_model[[n]][["metrics_svm"]][[1]][,1]),
                                 unlist(elnet_model[[n]][["metrics_elnet"]][[1]][,1]),
@@ -571,7 +574,6 @@ summary_vals <- comparing_models %>%
             min_roc_auc = min(roc_auc, na.rm = T),
             max_roc_auc = max(roc_auc, na.rm = T))
 
-
 # plot participants' best performing models and summarise mean AUC and accuracy split by model type
 
 individual_best_model_performance_stratified_plot <- comparing_models %>%
@@ -599,6 +601,7 @@ if(!file.exists(here("outputs", "individual_best_model_performance_stratified_pl
                                                                                   dpi = 320, height = 8, width = 10)
 
 # plot participants' best performing models and summarise mean AUC and accuracy (NOT split by model type)
+
 individual_best_model_performance_data <- comparing_models %>%
   pivot_longer(cols = c("sens", "spec", "accuracy", "roc_auc"), names_to = "metric") %>%
   mutate(metric = case_when(metric == "sens" ~ "Sensitivity",
@@ -607,24 +610,65 @@ individual_best_model_performance_data <- comparing_models %>%
                             metric == "roc_auc" ~ "AUC")) %>%
   group_by(metric) %>%
   mutate(mean = mean(value, na.rm = TRUE))
-  
+
+annotation <- tibble(metric = factor(c("Accuracy", "Sensitivity", "Specificity", "AUC"), levels = c("Accuracy", "Sensitivity", "Specificity", "AUC")),
+                     value = c(0.7, 0.7, 0.5, 0.5),
+                     median = individual_best_model_performance_data %>%
+                       mutate(metric = factor(metric, levels = c("Accuracy", "Sensitivity", "Specificity", "AUC"))) %>%
+                       group_by(metric) %>%
+                       summarise(median = median(value, na.rm = TRUE)) %>%
+                       pull(median))
 
 individual_best_model_performance_plot <-  individual_best_model_performance_data %>%
+  mutate(metric = factor(metric, levels = c("Accuracy", "Sensitivity", "Specificity", "AUC"))) %>%
   ggplot(aes(x = value, fill = metric)) +
   geom_histogram() +
-  geom_vline(aes(xintercept = mean)) +
+  geom_rect(data = annotation, aes(xmin = -Inf, xmax = value, ymin = -Inf, ymax = Inf), fill = "grey", alpha = 0.5) +
+  geom_vline(data = annotation, aes(xintercept = median), lwd = 0.7) +
   facet_wrap(~ metric, nrow = 4) +
   scale_fill_viridis_d(alpha = 0.8) +
-  scale_x_continuous(limits = c(0, 1.1), breaks = c(0, 0.25, 0.5, 0.75, 1)) +
+  scale_x_continuous(limits = c(0, 1.02), breaks = c(0, 0.25, 0.5, 0.75, 1)) +
   theme_bw() +
   labs(x = "Performance",
        y = "Count",
        fill = element_blank()) +
+  theme(legend.position = "none",
+        strip.background = element_rect(fill = "white"))
+
+if(!file.exists(here("outputs", "individual models", "individual_best_model_performance_plot.png"))) ggsave(individual_best_model_performance_plot, 
+                                                                                                            filename = here("outputs", "individual models", "individual_best_model_performance_plot.png"),
+                                                                                                            dpi = 320, height = 8, width = 10)
+
+# Compare to group model --------------------------------------------------
+
+group_auc <- read_rds(here("data", "group models", "group_to_individual.rds"))
+
+individual_to_group <- individual_best_model_performance_data %>%
+  filter(metric == "AUC") %>%
+  ungroup() %>%
+  select(account_id, model, model_auc = value) %>%
+  left_join(group_auc %>%
+              rename(group_auc = auc), by = c("account_id")) %>%
+  mutate(individual_preferred = model_auc >= group_auc)
+
+sum(individual_to_group$individual_preferred == TRUE)/39*100
+sum(individual_to_group$individual_preferred == FALSE)/39*100
+
+individual_to_group_plot <- individual_to_group %>%
+  ggplot() +
+  geom_point(aes(x = group_auc, y = model_auc, colour = individual_preferred)) +
+  geom_abline() +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_colour_viridis_d() +
+  theme_bw() +
+  labs(x = "Group-level algorithm AUC",
+       y = "Individual-level algorithm AUC") +
   theme(legend.position = "none")
 
-if(!file.exists(here("outputs", "individual_best_model_performance_plot.png"))) ggsave(individual_best_model_performance_plot, 
-                                                                                       filename = here("outputs", "individual_best_model_performance_plot.png"),
-                                                                                       dpi = 320, height = 8, width = 10)
+if(!file.exists(here("outputs", "individual models", "individual_to_group_plot.png"))) ggsave(individual_to_group_plot, 
+                                                                         filename = here("outputs", "individual models", "individual_to_group_plot.png"),
+                                                                         dpi = 320, height = 8, width = 10)
 
 # plot 10 most important predictor vars (vip) by model type
 
@@ -632,7 +676,13 @@ extract_model_vip <- function(account_ids = lapse_count, rf_model = individual_m
   
   model_vip <- list()
   
-  for(n in 1:length(account_ids)) {
+  complete_models <- tibble(account_ids = account_ids,
+                            complete_models = lengths(rf_model) >= 3 & lengths(svm_model) >= 3 & lengths(elnet_model) >= 3 & lengths(xgb_model) >= 3) %>%
+    filter(complete_models == TRUE)
+  
+  for(i in 1:nrow(complete_models)) {
+    
+    n = complete_models$account_ids[i]
     
     n_row <- nrow(bind_rows(rf_model[[n]][["final_rf_vip"]][[1]][,1],
                        svm_model[[n]][["final_svm_vip"]][[1]][,1],
@@ -647,7 +697,7 @@ extract_model_vip <- function(account_ids = lapse_count, rf_model = individual_m
     
     n_xgb <- nrow(xgb_model[[n]][["final_xgb_vip"]][[1]][,1])
     
-    model_vip[[n]] <- tibble(account_id = rep(lapse_count[n], n_row),
+    model_vip[[n]] <- tibble(account_id = rep(n, n_row),
                         variable = c(rf_model[[n]][["final_rf_vip"]][[1]][,1] %>%
                                        pull(Variable),
                                      svm_model[[n]][["final_svm_vip"]][[1]][,1] %>%
@@ -677,7 +727,7 @@ extract_model_vip <- function(account_ids = lapse_count, rf_model = individual_m
            drop_na(account_id)) 
 }
 
-n_participants = 48
+n_participants = 39
 
 individual_vip_by_model_type <- extract_model_vip() %>%
   mutate(model = factor(model, levels = c("xgb", "svm", "elnet", "rf"))) %>%
@@ -760,7 +810,7 @@ individual_vip_best_performing <- comparing_models %>%
                                   str_detect(variable, "With|Alone") ~ "Social context",
                                   str_detect(variable, "Prior event|Day|Time") ~ "Temporal",
                                   TRUE ~ as.character(variable))),
-         model = "Best performing model") %>%
+         model = "Best-performing individual-level algorithm") %>%
   group_by(group) %>%
   arrange(group, -prop_n) %>%
   mutate(variable = fct_inorder(variable)) %>%
@@ -774,6 +824,6 @@ individual_vip_best_performing <- comparing_models %>%
        y = element_blank()) +
   theme_minimal()
 
-if(!file.exists(here("outputs", "individual_vip_best_performing.png"))) ggsave(individual_vip_best_performing, 
-                                                                               filename = here("outputs", "individual_vip_best_performing.png"), 
-                                                                               dpi = 320, height = 8, width = 10)
+if(!file.exists(here("outputs", "individual models", "individual_vip_best_performing.png"))) ggsave(individual_vip_best_performing, 
+                                                                               filename = here("outputs", "individual models" , "individual_vip_best_performing.png"), 
+                                                                               dpi = 320, height = 6, width = 6)

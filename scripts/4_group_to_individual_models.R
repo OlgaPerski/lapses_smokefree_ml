@@ -16,15 +16,22 @@ data <- data_clean %>%
   ungroup() %>%
   filter(n >= 20)
 
+# remove participants with 0% or 100% lapses
+
+df_ <- data %>%
+  group_by(account_id) %>%
+  mutate(lapse_events = n()) %>%
+  mutate(prop_lapses = sum(craving_did_smoke == "true", na.rm = T)/lapse_events,
+         prop_non_lapses = sum(craving_did_smoke == "false", na.rm = T)/lapse_events) %>%
+  filter(prop_lapses > 0 & prop_non_lapses > 0) %>%
+  ungroup()
+
 # select vars to include
 
-exclude <- c("adjusted_quit_date", "adjusted_craving_record_created", 
-             "ttfc_1", "ttfc_2", "ttfc_3", "ttfc_4",
-             "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", 
-             "morning", "midday", "evening", "night", 
+exclude <- c("adjusted_quit_date", "adjusted_craving_record_created",
              "event_nr", "n")
 
-df <- data %>%
+df <- df_ %>%
   select(-all_of(exclude))
 
 df$mins_since_prev_rep[is.na(df$mins_since_prev_rep)] <- 0
@@ -73,30 +80,28 @@ for (i in 1:length(df_split_training)) {
   rf_rec <- recipe(craving_did_smoke ~ ., data = train_data) %>%
     step_dummy(all_nominal(), -all_outcomes()) %>%
     step_normalize(cigs_per_day, craving_severity, days_since_qd, mins_since_prev_rep) %>%
-    step_downsample(craving_did_smoke, skip = TRUE) # manages class imbalances
+    step_upsample(craving_did_smoke, skip = TRUE) # manages class imbalances
   
   rf_prep <- prep(rf_rec)
   rf_juiced <- juice(rf_prep)
   
-  xgb_spec <- boost_tree(
-    trees = 1000, 
-    tree_depth = 6, min_n = 8, 
-    loss_reduction = 0.853,                   
-    sample_size = 0.858, mtry = 23,         
-    learn_rate = 0.0277,                        
-  ) %>% 
-    set_engine("xgboost") %>% 
-    set_mode("classification")
+  rf_spec <- rand_forest(
+    mtry = 3,
+    trees = 500,
+    min_n = 13
+  ) %>%
+    set_mode("classification") %>%
+    set_engine("ranger")
   
-  wf_xgb <- workflow() %>%
+  wf_rf <- workflow() %>%
     add_recipe(rf_rec) %>%
-    add_model(xgb_spec)
+    add_model(rf_spec)
   
-  final_xgb_workflow_fit <- fit(wf_xgb, data = train_data)
+  final_rf_workflow_fit <- fit(wf_rf, data = train_data)
   
-  test_data$.pred_false <- predict(final_xgb_workflow_fit, new_data = test_data, type = "prob")$.pred_false
+  test_data$.pred_true <- predict(final_rf_workflow_fit, new_data = test_data, type = "prob")$.pred_true
   
-  roc_test_error <- tryCatch(roc(test_data$craving_did_smoke, test_data$.pred_false), error = function(e) e)
+  roc_test_error <- tryCatch(roc(test_data$craving_did_smoke, test_data$.pred_true), error = function(e) e)
   
   if(any(class(roc_test_error) == "error")) {
     
@@ -104,7 +109,7 @@ for (i in 1:length(df_split_training)) {
     
   } else {
     
-    roc_obj <- roc(test_data$craving_did_smoke, test_data$.pred_false)
+    roc_obj <- roc(test_data$craving_did_smoke, test_data$.pred_true)
     auc <- auc(roc_obj)
     ci.auc_lower <- ci.auc(roc_obj)[1]
     ci.auc_upper <- ci.auc(roc_obj)[3]
@@ -115,14 +120,19 @@ for (i in 1:length(df_split_training)) {
   }
 }
 
-write_rds(df_model_fit, here("data", "df_model_fit.rds"))
+write_rds(df_model_fit, here("data", "group models", "df_model_fit.rds"))
 
 # summarise model performance for each individual -------------------------
 
-df_model_fit <- read_rds(here::here("data", "df_model_fit.rds"))
+df_model_fit <- read_rds(here("data", "group models", "df_model_fit.rds"))
 
-model_performance <- tibble(auc = unlist(map(df_model_fit, "auc")))
+model_performance <- tibble(account_id =  df %>%
+                              group_by(account_id) %>%
+                              distinct(account_id) %>%
+                              pull(account_id),
+                            auc = unlist(map(df_model_fit, "auc")))
 
-mean(model_performance$auc)
-sd(model_performance$auc)
+write_rds(model_performance, here("data", "group models", "group_to_individual.rds"))
+
+median(model_performance$auc)
 range(model_performance$auc)
