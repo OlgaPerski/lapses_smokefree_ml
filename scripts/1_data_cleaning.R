@@ -53,6 +53,8 @@ p1 <- df2 %>%
   group_by(account_id) %>%
   summarise(count = n())
 
+length(p$account_id)-length(p1$account_id)
+
 #count and exclude craving entries where the difftime from the quit date is >3 months or <0
 
 df3 <- df2 %>%
@@ -73,6 +75,8 @@ df4 <- droplevels(df4)
 p2 <- df4 %>%
   group_by(account_id) %>%
   summarise(count = n())
+
+length(p1$account_id)-length(p2$account_id)
 
 #count and exclude craving entries where the difftime between when the entry was made and the date-time the entry refers to is >24 hours or <0
 
@@ -97,12 +101,14 @@ p3 <- df6 %>%
   group_by(account_id) %>%
   summarise(count = n())
 
-(sum(p3$count>=1)/14398)*100
-(sum(p3$count>=5)/14398)*100
-(sum(p3$count>=10)/14398)*100
-(sum(p3$count>=20)/14398)*100
-(sum(p3$count>=30)/14398)*100
-(sum(p3$count>=50)/14398)*100
+length(p2$account_id)-length(p3$account_id)
+
+(sum(p3$count>=1)/14419)*100
+(sum(p3$count>=5)/14419)*100
+(sum(p3$count>=10)/14419)*100
+(sum(p3$count>=20)/14419)*100
+(sum(p3$count>=30)/14419)*100
+(sum(p3$count>=50)/14419)*100
 
 #create day of the week (Mon-Sun) and time of day (morning, midday, evening, night) variables
 
@@ -130,12 +136,19 @@ p4 <- df8 %>%
   group_by(account_id) %>%
   summarise(count = n())
 
-(sum(p4$count>=1)/14398)*100
-(sum(p4$count>=5)/14398)*100
-(sum(p4$count>=10)/14398)*100
-(sum(p4$count>=20)/14398)*100
-(sum(p4$count>=30)/14398)*100
-(sum(p4$count>=50)/14398)*100
+sum(p4$count>=1)
+sum(p4$count>=5)
+sum(p4$count>=10)
+sum(p4$count>=20)
+sum(p4$count>=30)
+sum(p4$count>=50)
+
+(sum(p4$count>=1)/14419)*100
+(sum(p4$count>=5)/14419)*100
+(sum(p4$count>=10)/14419)*100
+(sum(p4$count>=20)/14419)*100
+(sum(p4$count>=30)/14419)*100
+(sum(p4$count>=50)/14419)*100
 
 #end of excluding participants/entries -----------------------------------
 
@@ -187,12 +200,9 @@ clean_variables <- c("account_id", "adjusted_quit_date", "cigs_per_day",
                      "time_to_first_cig", "wkday_craving", "time_of_day", "event_nr", "days_since_qd", "mins_since_prev_rep")
 
 data_clean <- df12 %>%
-  select(all_of(clean_variables))
-
-#format variables of interest
-
-data_clean <- data_clean %>%
-  mutate(across(where(is.character), .fns = as_factor))
+  select(all_of(clean_variables)) %>%
+  mutate(across(where(is.character), .fns = as_factor)) %>%
+  mutate(time_to_first_cig = factor(time_to_first_cig, levels = c("<= 5", "6-30", "31-60", "> 60")))
 
 #write to rds
 
