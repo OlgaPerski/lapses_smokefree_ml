@@ -660,7 +660,7 @@ individual_to_group_plot <- individual_to_group %>%
   geom_abline() +
   scale_x_continuous(limits = c(0, 1)) +
   scale_y_continuous(limits = c(0, 1)) +
-  scale_colour_viridis_d() +
+  scale_color_manual(values = c("blue", "black")) +
   theme_bw() +
   labs(x = "Group-level algorithm AUC",
        y = "Individual-level algorithm AUC") +
